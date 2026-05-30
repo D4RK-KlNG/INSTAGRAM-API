@@ -1,88 +1,89 @@
 const express = require("express");
-const https = require("https");
 
 const app = express();
 
 app.get("/", (req, res) => {
   res.json({
     status: true,
-    creator: "D4RK-K1NG",
-    endpoint: "/user?username=instagram"
+    endpoint: "/info?username=instagram"
   });
 });
 
-app.get("/user", (req, res) => {
-  const username = req.query.username;
+app.get("/info", async (req, res) => {
+  const name = req.query.username;
 
-  if (!username) {
+  if (!name) {
     return res.status(400).json({
-      status: false,
-      error: "Username required"
+      error: "missing_username",
+      use: "/info?username=<name>"
     });
   }
 
-  const options = {
-    hostname: "i.instagram.com",
-    path: `/api/v1/users/web_profile_info/?username=${username}`,
-    method: "GET",
-    headers: {
-      "x-ig-app-id": "936619743392459",
-      "User-Agent": "Mozilla/5.0"
-    }
-  };
-
-  const apiReq = https.request(options, apiRes => {
-    let data = "";
-
-    apiRes.on("data", chunk => {
-      data += chunk;
-    });
-
-    apiRes.on("end", () => {
-      try {
-        const json = JSON.parse(data);
-        const user = json.data.user;
-
-        res.json({
-          status: true,
-          result: {
-            username: user.username,
-            full_name: user.full_name,
-            biography: user.biography,
-            private: user.is_private,
-            verified: user.is_verified,
-            followers: user.edge_followed_by.count,
-            following: user.edge_follow.count,
-            posts: user.edge_owner_to_timeline_media.count,
-            profile_pic: user.profile_pic_url_hd,
-            external_url: user.external_url,
-            business: user.is_business_account,
-            professional: user.is_professional_account,
-            category: user.category_name
-          }
-        });
-
-      } catch (e) {
-        res.status(500).json({
-          status: false,
-          error: "Invalid response"
-        });
+  try {
+    const r = await fetch(
+      `https://i.instagram.com/api/v1/users/web_profile_info/?username=${name}`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          "x-ig-app-id": "936619743392459",
+          Accept: "application/json",
+          Referer: `https://www.instagram.com/${name}/`
+        }
       }
-    });
-  });
+    );
 
-  apiReq.on("error", err => {
+    if (r.status === 404) {
+      return res.status(404).json({ error: "not_found" });
+    }
+
+    if (!r.ok) {
+      return res.status(400).json({
+        error: "http_error",
+        code: r.status
+      });
+    }
+
+    const d = await r.json();
+    const u = d?.data?.user;
+
+    if (!u) {
+      return res.json({
+        error: "invalid_response",
+        raw: d
+      });
+    }
+
+    const recent =
+      u.edge_owner_to_timeline_media?.edges
+        ?.slice(0, 8)
+        .map(({ node }) => ({
+          id: node.id,
+          code: node.shortcode,
+          img: node.display_url,
+          cap:
+            node.edge_media_to_caption?.edges?.[0]?.node?.text || null
+        })) || [];
+
+    res.json({
+      id: u.id,
+      username: u.username,
+      name: u.full_name,
+      bio: u.biography,
+      verified: u.is_verified,
+      private: u.is_private,
+      pic: u.profile_pic_url_hd || u.profile_pic_url,
+      followers: u.edge_followed_by?.count || 0,
+      following: u.edge_follow?.count || 0,
+      posts: u.edge_owner_to_timeline_media?.count || 0,
+      recent
+    });
+  } catch (e) {
     res.status(500).json({
-      status: false,
-      error: err.message
+      error: "failed",
+      msg: e.message
     });
-  });
-
-  apiReq.end();
+  }
 });
 
 const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
-});
+app.listen(PORT, () => console.log(`Running on ${PORT}`));
